@@ -24,71 +24,83 @@ variable
 data Stack : List Set → Set where
   ε : Stack []
   _▷_ : T → Stack S → Stack (T ∷ S)
+infixr 40 _▷_
 
 data Code : List Set → List Set → Set₁ where
-  PUSH : T → Code S (T ∷ S)
-  _+++_ : Code S S' → Code S' S'' → Code S S''
+  PUSH : T → Code (T ∷ S) S' → Code S S'
   IF : Code S S' → Code S S' → Code (Bool ∷ S) S'
-  ADD : Code (ℕ ∷ ℕ ∷ S) (ℕ ∷ S)
+  ADD : Code (ℕ ∷ S) S' → Code (ℕ ∷ ℕ ∷ S) S'
+  HALT : Code S S
 
 exec : Code S S' → Stack S → Stack S'
-exec (PUSH x) s = x ▷ s
-exec (c1 +++ c2) s = exec c2 (exec c1 s)
+exec (PUSH x c) s = exec c (x ▷ s)
 exec (IF c1 c2) (b ▷ s) = if b then exec c1 s else exec c2 s
-exec ADD (m ▷ (n ▷ s)) = (n + m) ▷ s
+exec (ADD c) (m ▷ n ▷ s) = exec c ((n + m) ▷ s)
+exec HALT s = s
+
+comp : Exp T → Code (T ∷ S) S' → Code S S'
+comp (val x) c = PUSH x c
+comp (if b x y) c = comp b (IF (comp x c) (comp y c))
+comp (add x y) c = comp x (comp y (ADD c))
 
 compile : Exp T → Code S (T ∷ S)
-compile (val x) = PUSH x
-compile (if b x y) = compile b +++ IF (compile x) (compile y)
-compile (add x y) = (compile x +++ compile y) +++ ADD
+compile e = comp e HALT
 
 distrib-if : {A B : Set} (b : Bool) (x y : A) (f : A → B) → (f (if b then x else y)) ≡ (if b then f x else f y)
 distrib-if false x y f = refl
 distrib-if true x y f = refl
-correct : (e : Exp T) (s : Stack S) → exec (compile e) s ≡ eval e ▷ s
-correct (val x) s =
+correct : (e : Exp T) (s : Stack S) (c : Code (T ∷ S) S') → exec (comp e c) s ≡ exec c (eval e ▷ s)
+correct (val x) s c =
   begin
-    exec (compile (val x)) s
+    exec (comp (val x) c) s
   ≡⟨ refl ⟩
-    (x ▷ s)
+    exec (PUSH x c) s
   ≡⟨ refl ⟩
-    (eval (val x) ▷ s)
+    exec c (x ▷ s)
+  ≡⟨ refl ⟩
+    exec c (eval (val x) ▷ s)
   ∎
-correct (add x y) s =
+correct (if b x y) s c =
   begin
-    exec (compile (add x y)) s
-  ≡⟨⟩
-    exec ((compile x +++ compile y) +++ ADD) s
-  ≡⟨⟩
-    exec ADD (exec (compile x +++ compile y) s)
-  ≡⟨⟩
-    exec ADD (exec (compile y) (exec (compile x) s))
-  ≡⟨ cong (λ st → exec ADD st) (correct y (exec (compile x) s)) ⟩
-    exec ADD (eval y ▷ exec (compile x) s)
-  ≡⟨ cong (λ st → exec ADD (eval y ▷ st)) (correct x s) ⟩
-    exec ADD (eval y ▷ (eval x ▷ s))
-  ≡⟨⟩
-    (eval x + eval y) ▷ s
-  ≡⟨⟩
-    (eval (add x y) ▷ s)
+    exec (comp (if b x y) c) s
+  ≡⟨ refl ⟩
+    exec (comp b (IF (comp x c) (comp y c))) s
+  ≡⟨ correct b s (IF (comp x c) (comp y c)) ⟩
+    exec (IF (comp x c) (comp y c)) (eval b ▷ s)
+  ≡⟨ refl ⟩
+    (if eval b then exec (comp x c) s else exec (comp y c) s)
+  ≡⟨ cong (λ st → (if eval b then st else exec (comp y c) s)) (correct x s c) ⟩
+    (if eval b then exec c ((eval x) ▷ s) else exec (comp y c) s)
+  ≡⟨ cong (λ st → (if eval b then exec c ((eval x) ▷ s) else st)) (correct y s c) ⟩
+    (if (eval b) then exec c ((eval x) ▷ s) else exec c ((eval y) ▷ s))
+  ≡⟨ sym (distrib-if (eval b) ((eval x) ▷ s) ((eval y) ▷ s) λ s → exec c s) ⟩
+    exec c (if (eval b) then (eval x) ▷ s else (eval y) ▷ s)
+  ≡⟨ cong (λ s -> exec c s) (sym (distrib-if (eval b) (eval x) (eval y) λ v → v ▷ s)) ⟩
+    exec c ((if (eval b) then (eval x) else (eval y)) ▷ s)
+  ≡⟨ refl ⟩
+    exec c (eval (if b x y) ▷ s)
   ∎
-correct (if b x y) s =
+correct (add x y) s c =
   begin
-    exec (compile (if b x y)) s
-  ≡⟨⟩
-    exec (compile b +++ IF (compile x) (compile y)) s
-  ≡⟨⟩
-    exec (IF (compile x) (compile y)) (exec (compile b) s)
-  ≡⟨ cong (λ st → exec (IF (compile x) (compile y)) st) (correct b s) ⟩
-    exec (IF (compile x) (compile y)) (eval b ▷ s)
-  ≡⟨⟩
-    (if eval b then exec (compile x) s else exec (compile y) s)
-  ≡⟨ cong (λ st → (if eval b then st else exec (compile y) s)) (correct x s) ⟩
-    (if eval b then eval x ▷ s else exec (compile y) s)
-  ≡⟨ cong (λ st → (if eval b then eval x ▷ s else st)) (correct y s) ⟩
-    (if eval b then eval x ▷ s else eval y ▷ s)
-  ≡⟨ sym (distrib-if (eval b) (eval x) (eval y) λ x → x ▷ s) ⟩
-    (if eval b then eval x else eval y) ▷ s
-  ≡⟨⟩
-    eval (if b x y) ▷ s
+    exec (comp (add x y) c) s
+  ≡⟨ refl ⟩
+    exec (comp x (comp y (ADD c))) s
+  ≡⟨ correct x s (comp y (ADD c)) ⟩
+    exec (comp y (ADD c)) (eval x ▷ s)
+  ≡⟨ correct y (eval x ▷ s) (ADD c) ⟩
+    exec (ADD c) (eval y ▷ eval x ▷ s)
+  ≡⟨ refl ⟩
+    exec c ((eval x + eval y) ▷ s)
+  ≡⟨ refl ⟩
+    exec c (eval (add x y) ▷ s)
+  ∎
+
+correct' : (e : Exp T) (s : Stack S) → exec (comp e HALT) s ≡ eval e ▷ s
+correct' e s =
+  begin
+    exec (comp e HALT) s
+  ≡⟨ correct e s HALT ⟩
+    exec HALT (eval e ▷ s)
+  ≡⟨ refl ⟩
+    eval e ▷ s
   ∎
