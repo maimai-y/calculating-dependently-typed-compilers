@@ -95,9 +95,11 @@ correct (add x y) s c =
     exec c (eval (add x y) ▷ s)
   ∎
 
-correct' : (e : Exp T) (s : Stack S) → exec (comp e HALT) s ≡ eval e ▷ s
+correct' : (e : Exp T) (s : Stack S) → exec (compile e) s ≡ eval e ▷ s
 correct' e s =
   begin
+    exec (compile e) s
+  ≡⟨ refl ⟩ 
     exec (comp e HALT) s
   ≡⟨ correct e s HALT ⟩
     exec HALT (eval e ▷ s)
